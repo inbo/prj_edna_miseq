@@ -1,0 +1,43 @@
+Dag allen,
+
+ 
+
+Ik heb de MiSeq run verwerkt. In bijlage de count tabel die als ruwe output uit obitools komt. Ik heb met een minimum aantal reads van 80 gewerkt tijdens de obitools verwerking, dat wil zeggen dat alle sequenties die minder dan 80x gezien werden over alle stalen heen, niet weerhouden werden. Ook in bijlage de aangevulde sample sheet met de codes, ik heb deze ondertussen ook geregistreerd op ILVO. Kijk hier best ook eens naar het tweede tabblad waar ik het aantal “ruwe” reads noteerde, enkele stalen hebben weinig reads (spijtig genoeg niet de NTC’s) en eventuele resultaten hiervan zijn dus weinig betrouwbaar.
+
+ 
+
+Groetjes
+
+Annelies
+
+ 
+
+p.s. in één van de staalnamen zat een spatie (E2022STF304P PC), dit is te vermijden aangezien het demultiplexing script rare zaken uitsteekt indien er spaties in de staalnaam zitten. Dus best nog aanpassen, ik heb het vervangen door een underscore 😊
+
+Hieronder ook mijn commando’s, de scripts hebben jullie normaal gezien wel al staan.
+
+ 
+
+Unzippen
+
+gunzip *.gz
+
+ 
+
+Demultiplexing
+
+nohup /home/genomics/ahaegeman/GitLab/eDNA/1_Demultiplexing/eDNA_demultiplexing_exact_match_dual_barcodes.sh -b ligation1.txt -f /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz1_S1_L001_R1_001.fastq -r /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz1_S1_L001_R2_001.fastq
+
+ 
+
+nohup /home/genomics/ahaegeman/GitLab/eDNA/1_Demultiplexing/eDNA_demultiplexing_exact_match_dual_barcodes.sh -b ligation2.txt -f /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz2_S2_L001_R1_001.fastq -r /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz2_S2_L001_R2_001.fastq
+
+ 
+
+nohup /home/genomics/ahaegeman/GitLab/eDNA/1_Demultiplexing/eDNA_demultiplexing_exact_match_dual_barcodes.sh -b ligation3.txt -f /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz3_S3_L001_R1_001.fastq -r /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/Raw_output_Miseq/Fastq/Riaz3_S3_L001_R2_001.fastq
+
+ 
+
+Pipeline runnen
+
+nohup /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/eDNA_pipeline_MiSeq_Riaz.sh -f Riaz -d /home/genomics/ahaegeman/eDNA/MiSeqRun04-okt2022/0_Demultiplexing -r /home/genomics/ahaegeman/eDNA/refdb_riaz_2022-05-17/Riaz_2022_05_17 -a /home/genomics/ahaegeman/eDNA/refdb_riaz_2022-05-17/amplified_clean_uniq.fasta -m 80
