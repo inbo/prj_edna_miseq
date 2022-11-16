@@ -1,0 +1,421 @@
+---
+  title: "Downstream processing of obitools output"
+subtitle: 'Example case amphibians Run 9 (August 2019)'
+author:
+  - Annelies Haegeman^[Flanders Research Institute for Agriculture, Fisheries and Food]
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: pdf_document #html_document or pdf_document
+---
+  
+  ## R setup (load necessary libraries and set path)
+  
+  ```{r setup, include=TRUE, cache=FALSE}
+#set knitr options
+require("knitr")
+dir <- getwd()
+knitr::opts_knit$set(root.dir= paste(dir))
+knitr::opts_chunk$set(echo = TRUE)
+opts_knit$set(root.dir=normalizePath('../'))
+opts_chunk$set(fig.path = "figures/")
+
+#load libraries
+library(dplyr)
+library(tibble)
+library(reshape2)
+library(ggplot2)
+library(phyloseq)
+library(DECIPHER)
+library(ape)
+library(phangorn)
+library(stringr)
+library(scales)
+```
+
+## Read obitools table and explore data
+
+This script uses the output of the eDNA pipeline from ILVO/INBO. This pipeline produces a txt file in obitools table format, containing all counts for all organisms. It is called `all_derep_mincount80_cleaned_tagged_ann_sort_final_table.txt` and only contains sequences with their counts if the total number of times a sequences was seen (summed over all samples) was >= 80. 
+Below you can see what the original table looks like.
+
+```{r input}
+#read obitools table
+table<-read.table(paste0(dir,"/","data/all_derep_mincount80_cleaned_tagged_ann_sort_final_table.txt"), header=T, sep="\t")
+rownames(table) <- paste0("ASV", 1:nrow(table))  #rename the sequences as ASV1, ASV2, etc.
+
+#sort table and show first few lines
+table_sorted<-table %>% arrange(family_name,genus_name,scientific_name,id,count)
+head(table_sorted[,1:14]) #show first few rows and first 14 columns of the table
+
+#save sorted table to output txt file
+write.table(table_sorted,file=paste0(dir,"/output/","table_sorted.txt"),sep="\t",row.names=F,col.names=T,quote=F)
+
+#extract sample names
+samples<-colnames(table)[11:(length(colnames(table))-7)]
+```
+
+## Cleanup of sequences with low identity match to the reference database
+
+Many sequences deviate from sequences in our database. In the first step of the post processing, we remove the sequences that have a database match with less than 96% identity with a database sequences. The removed sequences are stored in a text file called `unknowns.txt`, the most occurring ones are on top of the file. It is strongly advised to inspect the most occurring sequences, add these to the database and rerun the analysis with an updated database.
+
+```{r check sequences with low identity match to reference database}
+#remove sequences that have a database match with less than "cutoff" identity with a database sequence
+cutoff<-0.96
+unknowns <- table %>% 
+  filter(!!rlang::sym(colnames(table)[3])<cutoff) %>%      #we use !!rlang::sym(a) to evaluate the results and turn it into a string, see https://thisisnic.github.io/2018/03/27/using-tidy-eval-with-dplyr-filter/
+  arrange(desc(!!rlang::sym(colnames(table)[5])))
+
+#write to output
+write.table(unknowns,file=paste0(dir,"/output/",cutoff,"_unknowns.txt"),sep="\t",row.names=F,col.names=T,quote=F)
+
+#store number of unknown reads per sample
+#colnames(unknowns)
+unknowns.data<- unknowns %>% select(samples)
+colnames(unknowns.data)<-substr(colnames(unknowns.data),8,1000000L)
+unknowns.readcount<-colSums(unknowns.data)
+
+#store total number of reads per sample
+table.data<- table %>% select(samples)
+colnames(table.data)<-substr(colnames(table.data),8,1000000L)
+table.readcount<-colSums(table.data)
+
+#combine both counts to a dataframe
+counts <- cbind(unknowns.readcount,table.readcount)
+colnames(counts)<-c(paste(cutoff,"_unknowns"),"total")
+
+#make it to a long table format
+counts.long <- melt(counts)
+colnames(counts.long)<-c("sample","subset","readcount")
+
+#make a barplot of the read counts per sample
+countplot<-ggplot(data=counts.long, aes(x=sample, y=readcount, fill=subset)) +
+  theme_bw() +
+  geom_bar(stat="identity",width=0.5) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust=0.5,size=4) ) +
+  scale_y_continuous(expand = c(0,0)) # to eliminate space between bar plot and labels
+#theme_bw()#use this theme to remove the grey background
+```
+
+In the following plot you can see the total number of reads per sample, with the fraction of "unknowns" (=reads with a reference database match <0.96) indicated in red.
+
+```{r show countplot, fig.width=10, fig.height=7}
+countplot + theme(axis.text=element_text(size=2),
+                  legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                  legend.position="bottom")
+pdf(file=paste0(dir,"/pdf_figures/","readcounts_per_sample_",cutoff,".pdf"),width=16.53,height=11.69)
+countplot
+trash<-dev.off()
+```
+
+```{r remove_unknowns}
+#calculate total number of reads lost after filtering the unknowns
+sum(unknowns.readcount)/sum(table.readcount)*100
+
+#Finally, we remove the sequences with less than 96% identity to their reference sequence
+ASVs.tokeep<-table %>%
+  rownames_to_column('ASV') %>%
+  filter(!!rlang::sym(colnames(table)[3])>=0.96) %>% 
+  select(ASV)
+table.filt<-table[ASVs.tokeep$ASV,]
+```
+
+
+## Make phyloseq object containing all read counts, taxonomy, sequences, phylogeny and metadata
+
+Next, we are ready to convert the data into `phyloseq` format, which makes it easy for further manipulations and analyses. A phyloseq object contains different types of data: the count table, the taxonomy, metadata, the sequences and the phylogeny.
+
+
+```{r phyloseq conversion}
+
+#make otutable for phyloseq (with counts only and with proper sample and sequence names)
+otutable<- table.filt %>% select(samples)
+#rownames(otutable)<-table$id
+colnames(otutable)<-substr(colnames(otutable),8,1000000L)
+otumat<-as.matrix(otutable) #save as matrix
+
+#make taxonomy table for phyloseq (make sure the sequences are in the same order as the otutable)
+taxonomy<-table.filt %>% select(family_name,genus_name,species_name)
+#also read a file called "family.txt" which contains categories and dutch names for the families. Add this info to the taxonomy table.
+family<-read.table(paste0(dir,"/","data/","families.txt"), header=T, sep="\t")
+colnames(family)<-c("family_name","familie","categorie")
+taxonomy2 <- left_join(taxonomy, family, by = "family_name")
+rownames(taxonomy2)<-rownames(taxonomy)
+#also add an extra  column showing the full taxonomy, which can be handy to use as labels in a plot
+full_name<-apply(taxonomy,1,paste0,collapse="_")
+taxonomy2<-cbind(taxonomy2,full_name)
+taxmat<-as.matrix(taxonomy2)
+
+#make metadata table
+metadata<-as.data.frame(colnames(otutable))
+rownames(metadata)<-colnames(otutable)
+metadata[,2]<-metadata[ ,1] #make a second column with the same data in the metadata, it has to have at least two columns to be able to map the labels on to ordination plots. We will remove the repeat number to be able to merge repeated samples later on.
+colnames(metadata)<-c("sample_name","sample_name_norepeat")
+metadata$sample_name_norepeat <-str_sub(metadata$sample_name_norepeat, 1, str_length(metadata$sample_name_norepeat)-2)
+
+#make phyloseq object
+ps<-phyloseq(otu_table(otumat, taxa_are_rows = TRUE),tax_table(taxmat),sample_data(metadata))
+
+#make phylogenetic tree
+sequences <- Biostrings::DNAStringSet(table.filt$sequence)
+names(sequences) <- rownames(table.filt)
+#Align sequences
+sequences.aligned <- AlignSeqs(sequences) #alignment (Decipher)
+#Make distance matrix
+sequences.dist<-DistanceMatrix(sequences.aligned) #distance matrix (Decipher)
+#Neighbour joining
+sequences.NJ=NJ(sequences.dist) #neighbour joining (ape)
+#add sequences and tree to phyloseq object
+ps <- merge_phyloseq(ps, sequences, sequences.NJ)
+
+#inspect phyloseq object
+ps
+```
+
+## Remove samples with low number of reads
+
+Next we check which samples have the smallest number of reads and we remove the samples with less than 10000 reads.
+
+```{r data cleanup of samples}
+
+#CLEANUP OF SAMPLES (based on low number of reads)
+
+#check out the samples with the smallest number of reads
+head(sort(table.readcount))
+#now remove samples with a read count smaller than a certain number
+samples.toremove<-names(table.readcount[table.readcount<10000])
+ps <- prune_samples(!(sample_names(ps) %in%  samples.toremove), ps)
+```
+
+## Remove sequences with low abundance
+
+Finally, we remove the sequences with a low overall abundance. We check how much read data we loose when we remove the sequences with number of reads lower than a certain threshold. Based on the plot which shows how many reads are still left when using a certain threshold, we decide to remove the sequences which have less than 2000 reads. 
+
+```{r data cleanup of sequences which have a low abundance, fig.width=10, fig.height=7}
+#CLEANUP OF SEQUENCES
+
+#initiate new dataframe and populate it with the calculation of how many sequences are kept at which filtering thresholds
+rownumber<-1
+cutoff<-seq(50, 20000, by=50)
+plotdata<-matrix(ncol=3, nrow=(length(cutoff)))
+colnames(plotdata)<-c("cutoff","keptsequences","percentage")
+for (i in cutoff){
+  plotdata[rownumber,1]<-i
+  ps.filt = filter_taxa(ps, function(x) sum(x) >= i, TRUE)   #use cutoff
+  plotdata[rownumber,2]<-sum(otu_table(ps.filt))   #calculate how many sequences are kept
+  plotdata[rownumber,3]<-sum(otu_table(ps.filt))/sum(otu_table(ps))*100   #calculate percentage of how many sequences are kept
+  rownumber=rownumber+1
+}
+#plot the data
+plotdata.df<-as.data.frame(plotdata)
+filterplot<-ggplot(plotdata.df) + 
+  geom_line(aes(x=cutoff,y=percentage)) +
+  labs(x="Filtering cutoff",y="Percentage of sequences kept") 
+pdf(file=paste0(dir,"/","pdf_figures/","optimize_filtering_parameters.pdf"))
+filterplot
+trash<-dev.off()
+
+filterplot
+
+#Based on plot, decide to prune taxa with less than 2000 reads
+ps.filt = filter_taxa(ps, function(x) sum(x) >= 2000, TRUE)
+#percentage of reads left
+sum(otu_table(ps.filt))/sum(otu_table(ps))*100
+
+#Check out filtered phyloseq object
+ps.filt
+
+```
+
+## Combine counts of taxa with the same taxonomic assignment
+
+Aggregate the taxonomy table, and combine the taxa with the same taxonomic assignment using the `tax_glom()` function.
+Alternatively, you can also aggregate according to the phylogenetic tree of the sequences, but this should be used with caution. 
+Neighbour joining phylogenetic trees are plotted and saved as pdf, the aggregated tree is shown below.
+
+```{r tax_glom, fig.width=10, fig.height=7}
+#plot full tree of all sequences
+pdf(file=paste0(dir,"/","pdf_figures/","NJ_tree.pdf"),width=11.69,height=16.53) 
+plot_tree(ps.filt, label.tips="full_name", ladderize="left", text.size=1.5)
+trash<-dev.off()
+pdf(file=paste0(dir,"/","pdf_figures/","NJ_tree_ASVlabels.pdf"),width=11.69,height=16.53) 
+plot_tree(ps.filt, "treeonly", label.tips="taxa_names", ladderize="left", text.size=1.5)
+trash<-dev.off()
+
+#aggregate the counts of sequences with the same taxonomy
+ps.filt.taxglom<-tax_glom(ps.filt, taxrank="full_name")
+#check phyloseq object
+ps.filt.taxglom
+#check tree
+tree.NJ.taxglom<-plot_tree(ps.filt.taxglom, label.tips="full_name", ladderize="left", text.size=4)
+pdf(file=paste0(dir,"/","pdf_figures/","NJtree_taxglom.pdf"),width=11.69,height=16.53)
+tree.NJ.taxglom
+trash<-dev.off()
+
+#aggregate the counts of sequences with which are close in the phylogenetic tree
+#adjust the h parameter to have a plausible aggregation
+ps.filt.tipglom<-tip_glom(ps.filt, h=0.05)
+pdf(file=paste0(dir,"/","pdf_figures/","NJtree_tipglom.pdf"),width=11.69,height=16.53)
+plot_tree(ps.filt.tipglom, label.tips="full_name", ladderize="left", text.size=4)
+trash<-dev.off()
+```
+
+## Global barplots
+
+Now we can normalize according to the number of reads by calculating percentages. Using this data we can make barplots at different taxonomic levels. In this case we use categorized data, where groups of families are assigned to certain categories.
+
+```{r barplots, fig.width=10, fig.height=7}
+#calculate percentages
+ps.filt.taxglom.frac <- transform_sample_counts(ps.filt.taxglom, function(OTU) OTU/sum(OTU)*100)
+
+#barplot categorie
+barplot<-plot_bar(ps.filt.taxglom.frac, fill="categorie") + 
+  theme(axis.text=element_text(size=8),legend.text=element_text(size=8),legend.key.size=unit(0.4, "cm")) + 
+  geom_bar(aes(color=categorie, fill=categorie), stat="identity", position="stack", color="white", width=0.6, linetype=0) +
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill = guide_legend(ncol = 1)) #add this line to force the legend in 1 column
+pdf(file=paste0(dir,"/","pdf_figures/","Barplot_categorie.pdf"),width=46.8,height=33.1)
+barplot 
+trash<-dev.off()
+
+barplot + theme(axis.text=element_text(size=2),
+                legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                legend.position="bottom")
+
+#barplot familie
+barplot<-plot_bar(ps.filt.taxglom.frac, fill="familie") +
+  theme(axis.text=element_text(size=8),legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm")) + 
+  geom_bar(aes(color=familie, fill=familie), stat="identity", position="stack", color="white", width=0.6, linetype=0) +
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill = guide_legend(ncol = 1)) #add this line to force the legend in 1 column
+pdf(file=paste0(dir,"/","pdf_figures/","Barplot_familie.pdf"),width=46.8,height=33.1)
+barplot
+trash<-dev.off()
+
+#barplot full name
+barplot<-plot_bar(ps.filt.taxglom.frac, fill="full_name") +
+  theme(axis.text=element_text(size=8),legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm")) + 
+  geom_bar(aes(color=familie, fill=full_name), stat="identity", position="stack", color="white", width=0.6, linetype=0)+
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill = guide_legend(ncol = 1)) #add this line to force the legend in 1 column
+pdf(file=paste0(dir,"/","pdf_figures/","Barplot_full_name.pdf"),width=46.8,height=33.1)
+barplot
+trash<-dev.off()
+
+
+```
+
+## Amphibian barplot, NMDS plot and heatmap
+Now we will select data of amphibians only and plot a barplot and NMDS plot. We first check the number of reads left, and remove the samples with less than 1000 reads.
+
+```{r subset organisms of interest, fig.width=10, fig.height=10}
+#select amphibians only
+ps.filt.taxglom.amphibians<-subset_taxa(ps.filt.taxglom,categorie=="amfibieën")
+#check phyloseq object to see how many taxa remain
+ps.filt.taxglom.amphibians
+
+#remove samples where the number of reads left is smaller than 1000.
+amphibians.readcount<-sort(colSums(otu_table(ps.filt.taxglom.amphibians)))
+amphibians.samples.toremove<-names(amphibians.readcount[amphibians.readcount<1000])
+amphibians.samples.toremove
+ps.filt.taxglom.amphibians.filt <- prune_samples(!(sample_names(ps.filt.taxglom.amphibians) %in%  amphibians.samples.toremove), ps.filt.taxglom.amphibians)
+
+#now remove taxa which have less than 10 counts (can be a consequence of removing some samples)
+ps.filt.taxglom.amphibians.filt <- filter_taxa(ps.filt.taxglom.amphibians.filt, function(x) sum(x) >= 10, TRUE)
+
+#check final phyloseq object
+ps.filt.taxglom.amphibians.filt 
+
+#calculate fractions (to scale the barplot to 100%)
+ps.filt.taxglom.amphibians.filt.frac <- transform_sample_counts(ps.filt.taxglom.amphibians.filt, function(OTU) OTU/sum(OTU)*100)
+
+#barplot full name
+barplot<-plot_bar(ps.filt.taxglom.amphibians.filt.frac, fill="full_name") +
+  theme(axis.text=element_text(size=8),legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm")) + 
+  geom_bar(aes(color=full_name, fill=full_name), stat="identity", position="stack", color="white", width=0.6, linetype=0) +
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill = guide_legend(ncol = 1)) #add this line to force the legend in 1 column
+pdf(file=paste0(dir,"/","pdf_figures/","Barplot_amfibieen.pdf"),width=46.8,height=33.1)
+barplot
+trash<-dev.off()
+barplot + theme(axis.text=element_text(size=2),
+                legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                legend.position="bottom")
+
+#Ordination: NMDS
+ps.filt.taxglom.amphibians.filt.ord <- ordinate(ps.filt.taxglom.amphibians.filt, "NMDS", "bray")
+ordinationplot <- plot_ordination(ps.filt.taxglom.amphibians.filt, ps.filt.taxglom.amphibians.filt.ord, type="samples", label="sample_name")
+pdf(file=paste0(dir,"/","pdf_figures/","NMDS_amfibieen.pdf"),width=16.5,height=11.7)
+ordinationplot
+trash<-dev.off()
+ordinationplot
+
+#Heatmap
+#make a character vector with full names of amphibians in alphabetical order (will be used to order the heatmap)
+otutable2<-cbind(rownames(as.data.frame(otu_table(ps.filt.taxglom.amphibians.filt))),as.data.frame(otu_table(ps.filt.taxglom.amphibians.filt)))
+colnames(otutable2)<-append("ASV",colnames(as.data.frame(otu_table(ps.filt.taxglom.amphibians.filt))))
+taxtable2<-cbind(rownames(as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt))),as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt)))
+colnames(taxtable2)<-append("ASV",colnames(as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt))))
+ASV.taxonomy<-left_join(otutable2, taxtable2, by = "ASV")
+ASV.taxonomy.ordered <-ASV.taxonomy %>% arrange(full_name)
+#plot heatmap
+heatmap<-plot_heatmap(ps.filt.taxglom.amphibians.filt.frac, taxa.label="full_name", taxa.order=rev(ASV.taxonomy.ordered$ASV), trans=identity_trans())
+pdf(file=paste0(dir,"/","pdf_figures/","heatmap_amfibieen.pdf"),width=16.5,height=11.7)
+heatmap
+trash<-dev.off()
+heatmap  + theme(axis.text.y=element_text(size=6),axis.text.x = element_text(size=2),
+                 legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                 legend.position="bottom")
+
+```
+## Finally, we make the same plots as above, but now consider the different replicates of a sample together.
+
+```{r aggregate repeats, fig.width=10, fig.height=10}
+#merge samples based on base name (without repeat number) = all counts of biological repeats are summed
+ps.filt.taxglom.amphibians.filt.merged <- merge_samples(ps.filt.taxglom.amphibians.filt, "sample_name_norepeat")
+#fix the names in the metadata
+sample_data(ps.filt.taxglom.amphibians.filt.merged)$sample_name_norepeat<-rownames(sample_data(ps.filt.taxglom.amphibians.filt.merged))
+#check the resulting phyloseq object
+ps.filt.taxglom.amphibians.filt.merged
+
+#calculate fractions (to scale the barplot to 100%)
+ps.filt.taxglom.amphibians.filt.merged.frac <- transform_sample_counts(ps.filt.taxglom.amphibians.filt.merged, function(OTU) OTU/sum(OTU)*100)
+
+#barplot
+barplot.merged<-plot_bar(ps.filt.taxglom.amphibians.filt.merged.frac, fill="full_name") +
+  theme(axis.text=element_text(size=10),legend.text = element_text(size=10),legend.key.size=unit(0.4, "cm")) + 
+  geom_bar(aes(color=full_name, fill=full_name), stat="identity", position="stack", color="white", width=0.6, linetype=0) +
+  scale_y_continuous(expand = c(0,0)) +
+  guides(fill = guide_legend(ncol = 1)) #add this line to force the legend in 1 colum
+pdf(file=paste0(dir,"/","pdf_figures/","Barplot_amfibieen_merged.pdf"),width=46.8,height=33.1)
+barplot.merged
+trash<-dev.off()
+barplot.merged + theme(axis.text=element_text(size=4),
+                       legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                       legend.position="bottom")
+
+#Ordination: NMDS
+ps.filt.taxglom.amphibians.filt.merged.ord <- ordinate(ps.filt.taxglom.amphibians.filt.merged, "NMDS", "bray")
+ordinationplot.merged <- plot_ordination(ps.filt.taxglom.amphibians.filt.merged, ps.filt.taxglom.amphibians.filt.merged.ord, type="samples", label="sample_name_norepeat")
+pdf(file=paste0(dir,"/","pdf_figures/","NMDS_amfibieen_merged.pdf"),width=16.5,height=11.7)
+ordinationplot.merged
+trash<-dev.off()
+ordinationplot.merged
+
+#Heatmap
+#make a character vector with full names of amphibians in alphabetical order (will be used to order the heatmap)
+#in this merged phyloseq object, the taxa are columns, so make sure to transpose the otu_tables 
+otutable3<-cbind(rownames(as.data.frame(t(otu_table(ps.filt.taxglom.amphibians.filt.merged)))),as.data.frame(t(otu_table(ps.filt.taxglom.amphibians.filt.merged))))
+colnames(otutable3)<-append("ASV",colnames(as.data.frame(t(otu_table(ps.filt.taxglom.amphibians.filt.merged)))))
+taxtable3<-cbind(rownames(as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt.merged))),as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt.merged)))
+colnames(taxtable3)<-append("ASV",colnames(as.data.frame(tax_table(ps.filt.taxglom.amphibians.filt.merged))))
+ASV.taxonomy.merged<-left_join(otutable3, taxtable3, by = "ASV")
+ASV.taxonomy.merged.ordered <-ASV.taxonomy.merged %>% arrange(full_name)
+#plot heatmap
+heatmap<-plot_heatmap(ps.filt.taxglom.amphibians.filt.merged.frac, taxa.label="full_name", taxa.order=rev(ASV.taxonomy.merged.ordered$ASV), trans=identity_trans())
+pdf(file=paste0(dir,"/","pdf_figures/","heatmap_amfibieen_merged.pdf"),width=16.5,height=11.7)
+heatmap
+trash<-dev.off()
+heatmap  + theme(axis.text.y=element_text(size=7),axis.text.x = element_text(size=4),
+                 legend.text = element_text(size=8),legend.key.size=unit(0.4, "cm"),
+                 legend.position="bottom")
+
+```
+
