@@ -45,3 +45,5 @@ vignettes/*.pdf
 *.fasta
 *.tar.gz
 raw_reads/
+input/
+reads/
