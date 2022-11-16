@@ -35,13 +35,13 @@ ligations <- list.files("reads", pattern = "*.smp")
 bt0 <- distinct_samples %>% 
   transmute(fwd, smp1 = paste0(name, "_R1.fq"), smp2 = paste0(name, "_F1.fq") )
 write_tsv(bt0, 
-          file = file.path("reads", sub(".smp", ".btab0", fnam)), 
+          file = file.path("reads", "allbarcodes.btab0"), 
           col_names = FALSE)
   
 bt1 <- distinct_samples %>% 
   transmute(rev, smp1 = paste0(name, "_R2.fq"), smp2 = paste0(name, "_F2.fq") )
 write_tsv(bt1, 
-          file = file.path("reads", sub(".smp", ".btab1", fnam)), 
+          file = file.path("reads", "allbarcodes.btab1"), 
           col_names = FALSE)
 
 for (i in 1:nrow(distinct_samples)) {
@@ -59,20 +59,6 @@ for (i in 1:nrow(distinct_samples)) {
             col_names = FALSE)
 }
 
-  
-sample_sheet %>% distinct(name, fwd, rev)
-
-for (fnam in ligations) {
-  lig <- read_tsv(file.path("reads", fnam), col_names = FALSE)
-  bt0 <- lig  %>% 
-    transmute(K1 = X2, K2 = paste0(X1, "_R1.fq"), K3 = paste0(X1, "_F1.fq"))
-  bt1 <- lig  %>% 
-    transmute(K1 = X3, K2 = paste0(X1, "_R2.fq"), K3 = paste0(X1, "_F2.fq"))
-  write_tsv(bt0, file = file.path("reads", sub(".smp", ".btab0", fnam)), 
-            col_names = FALSE)
-  write_tsv(bt1, file = file.path("reads", sub(".smp", ".btab1", fnam)), 
-            col_names = FALSE)
-}
 
 #kopieer naar wsl
 cat(file = "", sep = "\n",
@@ -81,13 +67,13 @@ cat(file = "", sep = "\n",
     paste0("cd miseq/", runname),
     "mkdir input",
     "cd input",
-    paste(paste0("cp ", file.path(path_wsl, "reads", ligations), " . "), 
-                 collapse = "\n"),
-    paste(paste0("cp ", file.path(path_wsl, "reads/*.btab?"), " . "), 
-          collapse = "\n"),
-    paste(paste0("gzip -dkf ", 
+    paste0("cp ", file.path(path_wsl, "reads/*.smp"),   " . "),
+    paste0("cp ", file.path(path_wsl, "reads/*.btab?"), " . "),
+    paste(paste0("gzip -dkfc ", 
                  file.path(path_wsl, "reads", reads), 
-                 paste0(" > ./", targets), 
+                 paste0(" > ", paste0("~/miseq/", runname, "/input/"), targets), 
           collapse = "\n"))
 )
 
+
+####################################################################################
