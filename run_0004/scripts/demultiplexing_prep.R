@@ -1,19 +1,5 @@
-
-
-library(tidyverse)
-library(readxl)
-source("scripts/_functions_demultiplex.R")
-
-setwd("run_0020")
-inputfile <- "Run04 MiSeq_sampleinfo_veldcodes_reads Annelis.xlsx"
-inputtab <- "Sample_sheet"
-runname <- "run_0020"
-runs <- 3
-
-tuxify_path <- function(path) {
-  sub(".:", paste0("/mnt/", tolower(substring(path,1,1))), path)
-}
-path_wsl <- tuxify_path(getwd())
+getwd()
+source("scripts/demultiplexing_init.R")
 
 #Maak de sample tabel en exporteer de ligatiefiles
 sample_sheet <- read_sample_sheet(inputfile, inputtab, runs, divider = "Riaz")

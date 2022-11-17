@@ -1,6 +1,19 @@
 #' Title
 #'
 #' @param path 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+tuxify_path <- function(path) {
+  sub(".:", paste0("/mnt/", tolower(substring(path,1,1))), path)
+}
+
+
+#' Title
+#'
+#' @param path 
 #' @param sheet 
 #' @param runs 
 #' @param divider 
