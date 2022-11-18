@@ -104,6 +104,44 @@ annelies <- read_tsv("verwerking_annelies/resultaat_annelies_all_derep_mincount8
 #IN MIJN VERSIE ZITTEN ENKEL DIE GEVONDEN ZIJN OP SOORTNIVEAU
 #BIJ ANNELIES ZITTEN ER OOK OP GENUS OF FAMILIE NIVEAU
 
+annelies1 <- annelies %>% 
+  select(id, 
+         best_identity = `best_identity:amplified_clean_uniq` ,
+         best_match = `best_match:amplified_clean_uniq`,
+         count, 
+         taxid, rank, scientific_name,
+         species_list = `species_list:amplified_clean_uniq`,
+         starts_with("sample:"),
+         sequence, species, genus, family,
+         -contains(c("Riaz_2", "Riaz_3")), -definition)
+colnames(annelies1) <- gsub("sample:", "", colnames(annelies1))
+colnames(annelies1) <- gsub("Riaz_1", "AH", colnames(annelies1))
+
+pieter1 <- pieter %>% 
+  mutate(rank = NA, species = NA, genus = NA, family = NA) %>% 
+  select(id = ID, 
+         best_identity = BEST_IDENTITY, 
+         best_match = BEST_MATCH_IDS,
+         count = COUNT, 
+         taxid = TAXID, rank, scientific_name = SCIENTIFIC_NAME,
+         species_list = BEST_MATCH_TAXIDS, 
+         starts_with("MERGED_sample:"), 
+         sequence = NUC_SEQ, species, genus, family)
+colnames(pieter1) <- gsub("MERGED_sample:", "", colnames(pieter1))
+colnames(pieter1) <- gsub("rep_1", "PV", colnames(pieter1))
+
+comparison <- annelies1 %>% 
+  full_join(pieter1, 
+            by = "sequence", suffix = c(".AH", ".PV"))
+comparison <- comparison[,sort(colnames(comparison))]
+view(comparison)
+
+
+
+
+###
+
+
 pieter_check <- pieter %>% select(SCIENTIFIC_NAME, E2022STF292 = `MERGED_sample:E2022STF292_rep_1`, TAXID) %>% 
   filter(TAXID != "None") %>% 
   mutate(TAXID = as.numeric(TAXID)) %>% 
