@@ -39,7 +39,8 @@ read_sample_sheet <- function(path, sheet = "Sample_sheet", runs, divider) {
                            ifelse (row > lig[3], 
                                    3, 
                                    NA)))) %>% 
-    filter(!is.na(ligation)) 
+    filter(!is.na(ligation)) %>% 
+    mutate(snam = paste0(name, "_rep_", ligation))
   sample_sheet
 }
 

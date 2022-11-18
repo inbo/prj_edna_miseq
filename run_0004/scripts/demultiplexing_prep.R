@@ -1,5 +1,5 @@
 getwd()
-source("scripts/demultiplexing_init.R")
+source("scripts/_init.R")
 
 #Maak de sample tabel en exporteer de ligatiefiles
 sample_sheet <- read_sample_sheet(inputfile, inputtab, runs, divider = "Riaz")
@@ -12,8 +12,6 @@ reads <- list.files("reads", pattern = "*.fastq.gz")
 targets <- sub("Riaz", "run", 
                sub("_S._L001", "", 
                    sub("_001.fastq.gz", ".fastq", reads)))
-ligations <- list.files("reads", pattern = "*.smp")
-
 
 #maak de barcodetabellen voor sabre
 #let op, we wisselen fwd en rev om, 
@@ -50,15 +48,14 @@ for (i in 1:nrow(distinct_samples)) {
 cat(file = "", sep = "\n",
     "#!/bin/bash", 
     "#STEP 1: Copy necessary files",
-    paste0("cd miseq/", runname),
+    paste0("cd ~/miseq/", runname),
     "mkdir input",
     "cd input",
-    paste0("cp ", file.path(path_wsl, "reads/*.smp"),   " . "),
-    paste0("cp ", file.path(path_wsl, "reads/*.btab?"), " . "),
+    paste0("cp ", file.path(path_wsl, "reads/*.btab?"), " . \n"),
     paste(paste0("gzip -dkfc ", 
                  file.path(path_wsl, "reads", reads), 
                  paste0(" > ", paste0("~/miseq/", runname, "/input/"), targets), 
-          collapse = "\n"))
+          collapse = "\n\n"))
 )
 
 
