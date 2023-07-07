@@ -23,7 +23,7 @@ tuxify_path <- function(path) {
 #'
 #' @examples
 read_sample_sheet <- function(path, sheet = "Sample_sheet", runs, divider) {
-  sample_sheet <- readxl::read_excel(inputfile, sheet = inputtab, skip = 1) %>% 
+  sample_sheet <- readxl::read_excel(path, sheet = sheet, skip = 1) %>% 
     select(type = 1, name = 10, fwd = 33, rev = 35) %>% 
     mutate(row = 1:n())
   lig <- which(substring(sample_sheet %>% pull(type), 

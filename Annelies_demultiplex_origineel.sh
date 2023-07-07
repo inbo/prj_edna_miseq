@@ -56,10 +56,10 @@ done
 #Rreads="/home/genomics/ALL_RAW_SEQ_DATA/03_eDNA/Taxonomic_profiling/12S/1221/not_demultiplexed/17121-12/17121FL-12-01-03_S71_L005_R2_001.fastq"
 
 	
-# Remove empty lines of barcode table 
+# Remove empty lines of barcode table
 cat $InputBarcodeTable | sed '/^$/d' > temp
 			
-# Remove header of barcode table if this is present (deletes lines starting with #)
+# Remove header of barcode table if this is present
 cat temp | grep -v "^#" > temp2
 		
 		

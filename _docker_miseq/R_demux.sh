@@ -20,6 +20,17 @@
 #
 ####################################################################################################################################################################################################
 
+#Andere voorbereidingen
+#gzip -d R1.fastq.gz
+#gzip -d R2.fastq.gz
+#./R_demux.sh -b R_samplesheet.smp -f R1.fastq -r R2.fastq
+
+#output *.fq werkt niet rechtstreeks
+#docker cp 933449a5db4d:/app/E2022STF275PC_F.fq .
+#docker cp 933449a5db4d:/app/E2022STF275PC_R.fq .
+#...
+
+
 
 # in case of no arguments, show help message
 if [ $# == 0 ]; then
