@@ -135,12 +135,9 @@ comparison <- annelies1 %>%
             by = "sequence", suffix = c(".AH", ".PV"))
 comparison <- comparison[,sort(colnames(comparison))]
 view(comparison)
-
 write_excel_csv2(comparison, file = "output/count_tables_AH_PV.csv")
 
-
 ###
-
 
 pieter_check <- pieter %>% select(SCIENTIFIC_NAME, E2022STF292 = `MERGED_sample:E2022STF292_rep_1`, TAXID) %>% 
   filter(TAXID != "None") %>% 
